@@ -5,6 +5,10 @@
 //
 
 #include "stat_thread.h"
+#include "db/db_impl.h"
+#include "common/nova_console_logging.h"
+#include <fmt/core.h>
+#include <algorithm>
 
 namespace nova {
     namespace {
@@ -106,6 +110,13 @@ namespace nova {
 
         std::string output;
         int flushed_memtable_size[BUCKET_SIZE];
+
+        uint64_t num_db = NovaConfig::config->cfgs[NovaConfig::config->current_cfg_id] -> fragments.size();
+        int hits_all_prev[num_db];
+        std::fill_n (hits_all_prev, num_db, 0);
+        int misses_all_prev[num_db];
+        std::fill_n (misses_all_prev, num_db, 0);
+
         while (true) {
             sleep(10);
 
@@ -249,6 +260,78 @@ namespace nova {
             }
             output += "\n";
 
+            int hits_in_10s[num_db];
+            int misses_in_10s[num_db];
+            int cache_sizes[num_db];
+
+            std::vector<leveldb::DBImpl *> nova_dbs;
+            for (auto frag : cfg->fragments) {
+                auto nova_db = reinterpret_cast<leveldb::DBImpl *>(frag->db);
+                if (nova_db) {
+                    nova_dbs.push_back(nova_db);
+                }
+            }
+
+            // sum up cache_hits, misses and sizes for entire cache
+            for (int i = 0; i < nova_dbs.size(); i++) {
+                int parition_num = nova_dbs[i] -> num_cache_partition;
+                int cache_hits[parition_num];
+                int cache_misses[parition_num];
+                int sizes[parition_num];
+                uint64_t cache_hit = 0, cache_miss = 0, cache_size = 0;
+                nova_dbs[i] -> QueryCachePartitionStats(cache_hits, cache_misses, sizes);
+                // output += "cache hits-partition,";
+                for(int j = 0; j < parition_num; j ++){
+                    cache_hit += cache_hits[j];
+                    // output += std::to_string(cache_hits[j]);
+                    // output += ",";
+                }
+                // output += "\n";
+                hits_in_10s[i] = cache_hit - hits_all_prev[i];
+                hits_all_prev[i] = cache_hit;
+
+
+                // output += "cache misses-partition,";
+                for(int j = 0; j < parition_num; j ++){
+                    cache_miss += cache_misses[j];
+                    // output += std::to_string(cache_misses[j]);
+                    // output += ",";
+                }
+                // output += "\n";
+                misses_in_10s[i] = cache_miss - misses_all_prev[i];
+                misses_all_prev[i] = cache_miss;
+
+                // output += "cache sizes-partition,";
+                for(int j = 0; j < parition_num; j ++){
+                    cache_size += sizes[j];
+                    // output += std::to_string(sizes[j]);
+                    // output += ",";
+                }
+                // output += "\n";
+                cache_sizes[i] = cache_size;
+            }
+
+            output += "cache hits in 10s,";
+            for (int i = 0; i < nova_dbs.size(); i++) {
+                output += std::to_string(hits_in_10s[i]);
+                output += ",";
+            }
+            output += "\n";
+
+            output += "cache misses in 10s,";
+            for (int i = 0; i < nova_dbs.size(); i++) {
+                output += std::to_string(misses_in_10s[i]);
+                output += ",";
+            }
+            output += "\n";
+
+            output += "cache_size-all,";
+            for (int i = 0; i < nova_dbs.size(); i++) {
+                output += std::to_string(cache_sizes[i]);
+                output += ",";
+            }
+            output += "\n";
+            
             // report overlapping sstables.
             leveldb::DBStats aggregated_stats = {};
             uint32_t size_dist[BUCKET_SIZE];

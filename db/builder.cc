@@ -81,7 +81,7 @@ namespace leveldb {
     Status
     BuildTable(const std::string &dbname, Env *env, const Options &options,
                TableCache *table_cache, Iterator *iter, FileMetaData *meta,
-               EnvBGThread *bg_thread, bool prune_memtables) {
+               EnvBGThread *bg_thread, bool prune_memtables, CacheIndex *cache_index) {
         Status s;
         meta->file_size = 0;
         iter->SeekToFirst();
@@ -113,6 +113,19 @@ namespace leveldb {
                     Slice ukey = ExtractUserKey(key);
                     if (!user_key.empty() && user_comp->Compare(ukey, user_key) == 0) {
                         insert = false;
+                    }
+                    if(cache_index && nova::NovaConfig::config -> enable_cache_index){
+                        ParsedInternalKey ikey;
+                        if(ParseInternalKey(key, &ikey) && ikey.type == ValueType::kTypeCache) {
+                            bool is_memtableid = false;
+                            uint64_t hash = 0;
+                            nova::str_to_int(ikey.user_key.data(), &hash);
+                            uint64_t table_id = cache_index -> get(user_key, hash, is_memtableid);
+                            if(is_memtableid && meta -> number == table_id){
+                                cache_index -> remove(user_key, hash);
+                            }
+                            insert = false;
+                        }
                     }
                     user_key = ukey;
                 }

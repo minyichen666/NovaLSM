@@ -153,7 +153,14 @@ namespace nova {
     }
 
     void LoadThread::VerifyLoad() {
-        auto client = new leveldb::StoCBlockClient(tid_, nullptr);
+        leveldb::EnvOptions env_option;
+        env_option.sstable_mode = leveldb::NovaSSTableMode::SSTABLE_DISK;
+        leveldb::PosixEnv *env = new leveldb::PosixEnv;
+        env->set_env_option(env_option);
+        leveldb::StocPersistentFileManager *stoc_file_manager = new leveldb::StocPersistentFileManager(env, mem_manager_,
+                                                                                                       NovaConfig::config->stoc_files_path,
+                                                                                                       NovaConfig::config->max_stoc_file_size);
+        auto client = new leveldb::StoCBlockClient(tid_, stoc_file_manager);
         client->rdma_msg_handlers_ = async_workers_;
         leveldb::ReadOptions read_options = {};
         read_options.mem_manager = mem_manager_;
@@ -167,6 +174,7 @@ namespace nova {
                 continue;
             }
             leveldb::DB *db = reinterpret_cast<leveldb::DB *>(frags[i]->db);
+            leveldb::DBImpl *dbi = reinterpret_cast<leveldb::DBImpl *>(frags[i]->db);
             NOVA_LOG(INFO) << fmt::format("t[{}] Verify range {} to {}", tid_,
                                           frags[i]->range.key_start,
                                           frags[i]->range.key_end);
@@ -183,9 +191,11 @@ namespace nova {
                 NOVA_ASSERT(s.ok()) << s.ToString();
 
                 leveldb::Status status = db->Get(read_options, key, &value);
+                //leveldb::Status status = dbi->Get(read_options, key, &value);
                 NOVA_ASSERT(status.ok())
                     << fmt::format("key:{} status:{}", key, status.ToString());
                 NOVA_ASSERT(expected_val.compare(value) == 0) << value;
+
 
                 if (j == frags[i]->range.key_start) {
                     break;
@@ -195,6 +205,21 @@ namespace nova {
                 << fmt::format("t[{}]: Success: Verified range {} to {}", tid_,
                                frags[i]->range.key_start,
                                frags[i]->range.key_end);
+
+            int cache_hits[32];
+            int cache_misses[32];
+            int sizes[32];
+            uint64_t cache_hit = 0, cache_miss = 0, cache_size = 0;
+            dbi -> QueryCachePartitionStats(cache_hits, cache_misses, sizes);
+            for(int i = 0; i < 32; i ++){
+                cache_hit += cache_hits[i];
+                cache_miss += cache_misses[i];
+                cache_size += sizes[i];
+            }
+            NOVA_LOG(INFO)
+            << fmt::format("partition {}: cache hits : {}, cache misses : {}, sizes : {}", i, cache_hit,
+                            cache_miss,
+                            cache_size);
         }
     }
 
@@ -213,6 +238,7 @@ namespace nova {
         timeval end{};
         gettimeofday(&end, nullptr);
         throughput = puts / std::max((int) (end.tv_sec - start.tv_sec), 1);
+        // VerifyLoad();
     }
 
     void NICServer::LoadData() {

@@ -236,6 +236,11 @@ namespace nova {
         int num_stocs_scatter_data_blocks = 0;
         int num_migration_threads = 0;
 
+        bool enable_cache_index = false;
+        CacheValueType cache_value_type = CacheValueType::HYBRID;
+        uint32_t num_cache_partition = 0;
+        uint64_t num_cache_partition_entry = 0;
+
         LTCMigrationPolicy ltc_migration_policy = LTCMigrationPolicy::IMMEDIATE;
 
         void ReadZipfianDist() {

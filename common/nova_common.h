@@ -65,6 +65,11 @@ namespace nova {
         static NovaGlobalVariables global;
     };
 
+
+    enum CacheValueType {
+        MEMTABLEID, SSTABLEID, HYBRID
+    };
+
     enum NovaRDMAPartitionMode {
         RANGE = 0,
         HASH = 1,
