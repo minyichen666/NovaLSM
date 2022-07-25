@@ -116,6 +116,8 @@ namespace nova {
         std::fill_n (hits_all_prev, num_db, 0);
         int misses_all_prev[num_db];
         std::fill_n (misses_all_prev, num_db, 0);
+        int evictions_all_prev[num_db];
+        std::fill_n (misses_all_prev, num_db, 0);
 
         while (true) {
             sleep(10);
@@ -263,6 +265,7 @@ namespace nova {
             int hits_in_10s[num_db];
             int misses_in_10s[num_db];
             int cache_sizes[num_db];
+            int evictions_in_10s[num_db];
 
             std::vector<leveldb::DBImpl *> nova_dbs;
             for (auto frag : cfg->fragments) {
@@ -275,11 +278,14 @@ namespace nova {
             // sum up cache_hits, misses and sizes for entire cache
             for (int i = 0; i < nova_dbs.size(); i++) {
                 int parition_num = nova_dbs[i] -> num_cache_partition;
-                int cache_hits[parition_num];
-                int cache_misses[parition_num];
-                int sizes[parition_num];
-                uint64_t cache_hit = 0, cache_miss = 0, cache_size = 0;
-                nova_dbs[i] -> QueryCachePartitionStats(cache_hits, cache_misses, sizes);
+                int cache_hits[parition_num] = {};
+                int cache_misses[parition_num] = {};
+                int sizes[parition_num] = {};
+                int cache_evictions[parition_num] = {};
+                uint64_t cache_hit = 0, cache_miss = 0, cache_size = 0, cache_eviction = 0;
+                if(nova::NovaConfig::config -> enable_cache_index){
+                    nova_dbs[i] -> QueryCachePartitionStats(cache_hits, cache_misses, sizes, cache_evictions);
+                }
                 // output += "cache hits-partition,";
                 for(int j = 0; j < parition_num; j ++){
                     cache_hit += cache_hits[j];
@@ -309,6 +315,23 @@ namespace nova {
                 }
                 // output += "\n";
                 cache_sizes[i] = cache_size;
+
+                for(int j = 0; j < parition_num; j ++){
+                    cache_eviction += cache_evictions[j];
+                }
+                evictions_in_10s[i] = cache_eviction - evictions_all_prev[i];
+                evictions_all_prev[i] = cache_eviction;
+
+                output += "cache_size-p,";
+                for (int i = 0; i < nova_dbs.size(); i++) {
+                    output += std::to_string(parition_num);
+                    output += ",";
+                    for(int j = 0; j < parition_num; j ++){
+                        output += std::to_string(sizes[j]);
+                        output += ",";
+                    }
+                }
+                output += "\n";
             }
 
             output += "cache hits in 10s,";
@@ -321,6 +344,13 @@ namespace nova {
             output += "cache misses in 10s,";
             for (int i = 0; i < nova_dbs.size(); i++) {
                 output += std::to_string(misses_in_10s[i]);
+                output += ",";
+            }
+            output += "\n";
+
+            output += "cache evictions in 10s,";
+            for (int i = 0; i < nova_dbs.size(); i++) {
+                output += std::to_string(evictions_in_10s[i]);
                 output += ",";
             }
             output += "\n";

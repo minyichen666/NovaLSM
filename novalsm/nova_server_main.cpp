@@ -126,9 +126,11 @@ DEFINE_string(ltc_migration_policy, "base", "immediate/base");
 DEFINE_bool(use_ordered_flush, false, "use ordered flush");
 
 DEFINE_bool(enable_cache_index, false, "use cache index");
+//DEFINE_bool(enable_os_cache, true, "use operating system cache to read file");
 DEFINE_uint32(num_cache_partition, 0, "Number  of partition in cache index");
 DEFINE_uint64(num_cache_partition_entry, 0, "Number of entry in each cache index partition");
 DEFINE_string(cache_value_type, "HYBRID", "Kind of table id stored in cache index");
+DEFINE_bool(memtable_eviction, true, "evict cache entry when memtable is full");
 
 
 NovaConfig *NovaConfig::config;
@@ -245,6 +247,8 @@ int main(int argc, char *argv[]) {
     NovaConfig::config->num_tinyranges_per_subrange = FLAGS_num_tinyranges_per_subrange;
 
     NovaConfig::config->enable_cache_index = FLAGS_enable_cache_index;
+    //NovaConfig::config->enable_os_cache = FLAGS_enable_os_cache;
+    NovaConfig::config->memtable_eviction = FLAGS_memtable_eviction;
     NovaConfig::config->num_cache_partition = FLAGS_num_cache_partition;
     NovaConfig::config->num_cache_partition_entry = FLAGS_num_cache_partition_entry;
 

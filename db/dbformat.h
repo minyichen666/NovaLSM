@@ -143,7 +143,7 @@ namespace leveldb {
         result->sequence = num >> 8;
         result->type = static_cast<ValueType>(c);
         result->user_key = Slice(internal_key.data(), n - 8);
-        return (c <= static_cast<uint8_t>(kTypeValue));
+        return (c <= static_cast<uint8_t>(kTypeCache));
     }
 
 // A helper class useful for DBImpl::Get()

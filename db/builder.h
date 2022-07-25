@@ -32,7 +32,7 @@ namespace leveldb {
     Status
     BuildTable(const std::string &dbname, Env *env, const Options &options,
                TableCache *table_cache, Iterator *iter, FileMetaData *meta,
-               EnvBGThread *bg_thread, bool prune_memtables, CacheIndex *cache_index);
+               EnvBGThread *bg_thread, bool prune_memtables, CacheIndex *cache_index, uint32_t memtable_id = 0);
 
     Status
     TestBuildTable(const std::string &dbname, Env *env, const Options &options,

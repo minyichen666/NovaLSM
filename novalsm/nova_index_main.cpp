@@ -129,9 +129,10 @@ void insertAndGetTest4(){
 
 void removeTest(){
     int hash = 116;
+    int memtable_id = 17;
     bool is_memtableid;
     for(int i = 0; i < 16; i ++){
-        cache_index_ -> remove(leveldb::Slice(), hash);
+        cache_index_ -> remove(leveldb::Slice(), hash, memtable_id++, false);
         hash ++;
     }
     //partition 1
@@ -207,27 +208,27 @@ void LRUTest(){
 }
 
 void sizeTest(){
-    delete cache_index_;
-    cache_index_ = new leveldb::CacheIndex(32, 10000);
+    // delete cache_index_;
+    // cache_index_ = new leveldb::CacheIndex(32, 10000);
 
-    int hash = 1;
-    for(int i = 0; i < 320000; i ++){
-        cache_index_ -> put(leveldb::Slice(), hash, 1, false);
-        hash ++;
-    }
-    std::cout << "size of cache index: " << sizeof(*cache_index_) << std::endl;
+    // int hash = 1;
+    // for(int i = 0; i < 320000; i ++){
+    //     cache_index_ -> put(leveldb::Slice(), hash, 1, false);
+    //     hash ++;
+    // }
+    // std::cout << "size of cache index: " << sizeof(*cache_index_) << std::endl;
 }
 
 int main(int argc, char *argv[]) {
-    cache_index_ = new leveldb::CacheIndex(4, 4);
+    // cache_index_ = new leveldb::CacheIndex(4, 4);
 
-    insertAndGetTest1();
-    insertAndGetTest2();
-    insertAndGetTest3();
-    insertAndGetTest4();
-    removeTest();
-    LRUTest();
-    sizeTest();
-    delete cache_index_;
+    // insertAndGetTest1();
+    // insertAndGetTest2();
+    // insertAndGetTest3();
+    // insertAndGetTest4();
+    // removeTest();
+    // LRUTest();
+    // sizeTest();
+    // delete cache_index_;
     return 0;
 }

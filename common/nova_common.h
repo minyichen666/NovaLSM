@@ -32,8 +32,8 @@
 #include <stdexcept>
 
 namespace nova {
-#define RDMA_POLL_MIN_TIMEOUT_US 10
-#define RDMA_POLL_MAX_TIMEOUT_US 10
+#define RDMA_POLL_MIN_TIMEOUT_US 0
+#define RDMA_POLL_MAX_TIMEOUT_US 0
 #define LEVELDB_TABLE_PADDING_SIZE_MB 2
 #define MAX_BLOCK_SIZE 10240
     using namespace std;

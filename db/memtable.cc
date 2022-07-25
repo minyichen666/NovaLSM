@@ -186,7 +186,7 @@ namespace leveldb {
         return new MemTableIterator(this, trace_type, caller, sample_size);
     }
 
-    void MemTable::Add(SequenceNumber s, ValueType type, const Slice &key,
+    bool MemTable::Add(SequenceNumber s, ValueType type, const Slice &key,
                        const Slice &value) {
         // Format of an entry is concatenation of:
         //  key_size     : varint32 of internal_key.size()
@@ -208,7 +208,7 @@ namespace leveldb {
         p = EncodeVarint32(p, val_size);
         memcpy(p, value.data(), val_size);
         assert(p + val_size == buf + encoded_len);
-        table_.Insert(buf);
+        return table_.Insert(buf);
     }
 
     bool MemTable::Get(const LookupKey &key, std::string *value, Status *s) {
@@ -235,6 +235,11 @@ namespace leveldb {
                 const uint64_t tag = DecodeFixed64(key_ptr + key_length - 8);
                 switch (static_cast<ValueType>(tag & 0xff)) {
                     case kTypeValue: {
+                        Slice v = GetLengthPrefixedSlice(key_ptr + key_length);
+                        value->assign(v.data(), v.size());
+                        return true;
+                    }
+                    case kTypeCache: {
                         Slice v = GetLengthPrefixedSlice(key_ptr + key_length);
                         value->assign(v.data(), v.size());
                         return true;

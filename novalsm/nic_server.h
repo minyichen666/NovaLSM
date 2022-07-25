@@ -22,6 +22,8 @@
 #include "lsm_tree_cleaner.h"
 
 namespace nova {
+
+    #define NUM_VERIFY_LOADING_THREAD 25
     class NICClientReqWorker;
 
     class LoadThread {
@@ -34,7 +36,7 @@ namespace nova {
 
         uint64_t throughput = 0;
 
-        void VerifyLoad();
+        void VerifyLoad(NICClientReqWorker *worker, uint32_t partitioned_num = -1);
 
     private:
         uint64_t LoadDataWithRangePartition();

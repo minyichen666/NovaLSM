@@ -113,7 +113,7 @@ namespace leveldb {
 
         void QueryDBStats(DBStats *db_stats) override;
 
-        void QueryCachePartitionStats(int *cache_hits, int *cache_misses, int* sizes);
+        void QueryCachePartitionStats(int *cache_hits, int *cache_misses, int* sizes, int *cache_evictions);
 
         Status Recover() override;
 
@@ -385,7 +385,7 @@ namespace leveldb {
                                   bool should_wait, uint64_t last_sequence,
                                   SubRange *subrange);
 
-        bool WriteStaticPartitionNoWriteStall(const leveldb::WriteOptions &options,
+        Status WriteStaticPartitionNoWriteStall(const leveldb::WriteOptions &options,
                                   const leveldb::Slice &key,
                                   const leveldb::Slice &value,
                                   uint32_t partition_id,
@@ -395,6 +395,7 @@ namespace leveldb {
 
         StoCWritableFileClient *manifest_file_ = nullptr;
         unsigned int rand_seed_ = 0;
+        MemManager *mem_manager_;
     };
 
 // Sanitize db options.  The caller should delete result.info_log if

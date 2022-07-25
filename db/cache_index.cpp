@@ -38,7 +38,7 @@ namespace leveldb {
         }
     }
 
-    void LinkedList::remove(Node *node){
+    void LinkedList::remove(MemManager *mem_manager, Node *node){
         remove_without_freeing(node);
         if(node){
             if(node -> prev){
@@ -47,46 +47,54 @@ namespace leveldb {
             if(node -> next){
                 node -> next = nullptr;
             }
-            delete node;
+            uint32_t scid = mem_manager->slabclassid(node -> hash, sizeof(Node));
+            mem_manager->FreeItem(node -> hash, (char *)node, scid);
         }
     }
 
-    LinkedList::~LinkedList(){
-        while(head){
-            remove(head);
-        }
-    }
+    // LinkedList::~LinkedList(){
+    //     while(head){
+    //         remove(head);
+    //     }
+    // }
 
-    CacheIndex::CacheIndex(uint32_t partition_num, uint32_t partition_size){
-        cache_index_ = new CachePartition[partition_num];
+    CacheIndex::CacheIndex(uint32_t partition_num, uint32_t partition_size, MemManager *mem_manager){
         partition_num_ = partition_num;
+        mem_manager_ = mem_manager;
+        uint32_t scid = mem_manager_->slabclassid(partition_num_, sizeof(CachePartition) * partition_num_);
+        char *buf = mem_manager_->ItemAlloc(partition_num_, scid);
+        cache_index_ = new(buf) CachePartition[partition_num_];
         for(int i = 0; i < partition_num_; i ++){
             CachePartition &partition = cache_index_[i];
             partition.size = partition_size;
-            partition.lru_queue = new LinkedList();
+            scid = mem_manager_->slabclassid(i, sizeof(LinkedList));
+            buf = mem_manager_->ItemAlloc(i, scid);
+            // partition.lru_queue = reinterpret_cast<LinkedList*>(buf);
+            partition.lru_queue = new(buf) LinkedList();
             partition.tableid_map = new std::unordered_map<uint64_t, Node *>();
-            partition.cache_hits = 0;
-            partition.cache_misses = 0;
+            partition.cache_hits.store(0);
+            partition.cache_misses.store(0);
         }
         NOVA_LOG(rdmaio::INFO)
             << fmt::format("Create cache index with {} partition with size {}", partition_num, partition_size);
-        int cache_sizes = 0;
-        for(int i = 0; i < partition_num_; i ++){
-            CachePartition &partition = cache_index_[i];
-            cache_sizes += partition.tableid_map -> size();
-        }
         NOVA_LOG(rdmaio::INFO)
-            << fmt::format("Create cache index initial size {}", cache_sizes);
+            << fmt::format("size of cache index {}, size of Node {} ", sizeof(CacheIndex), sizeof(Node));
     }
 
     CacheIndex::~CacheIndex(){
         for(int i = 0; i < partition_num_; i ++){
             CachePartition &partition = cache_index_[i];
-            delete partition.lru_queue;
+            while(partition.lru_queue->head){
+                partition.lru_queue->remove(mem_manager_,partition.lru_queue->head);
+            }
+            uint32_t scid = mem_manager_->slabclassid(i, sizeof(LinkedList));
+            mem_manager_->FreeItem(i, (char *)partition.lru_queue, scid);
             partition.tableid_map -> clear();
             delete partition.tableid_map;
         }
-        delete[] cache_index_;
+        uint32_t scid = mem_manager_->slabclassid(partition_num_, sizeof(CachePartition) * partition_num_);
+        mem_manager_->FreeItem(partition_num_, (char *)cache_index_, scid);
+        // delete[] cache_index_;
     }
 
     uint64_t CacheIndex::get(const Slice &key, uint64_t hash, bool &is_memtableid){
@@ -94,7 +102,6 @@ namespace leveldb {
         partition.mutex.lock();
         auto it = partition.tableid_map -> find(hash);
         if(it != partition.tableid_map -> end()){
-            partition.cache_hits ++;
             Node *node = it -> second;
             //if key is found，move lastest used hash to the front
             partition.lru_queue -> remove_without_freeing(node);
@@ -105,7 +112,6 @@ namespace leveldb {
             partition.mutex.unlock();
             return table_id;
         }else{
-            partition.cache_misses ++;
             partition.mutex.unlock();
             return 0;
         }
@@ -120,47 +126,78 @@ namespace leveldb {
             //if cache is full, evict least recently used
             if(partition.tableid_map -> size() == partition.size){
                 uint64_t evict_hash = partition.lru_queue -> tail -> hash;
-                partition.lru_queue -> remove(partition.lru_queue -> tail);
+                partition.lru_queue -> remove(mem_manager_, partition.lru_queue -> tail);
                 partition.tableid_map -> erase(evict_hash);
+                partition.cache_evictions ++;
             }
         }else{
-            partition.lru_queue -> remove(it -> second);
+            partition.lru_queue -> remove(mem_manager_, it -> second);
             partition.tableid_map -> erase(it -> first);
         }
         //put key value into cache
-        Node *newNode = new Node();
-        newNode -> table_id = memtableid;
-        newNode -> is_memtableid = is_memtableid;
-        newNode -> hash = hash;
-        partition.lru_queue -> push_front(newNode);
-        partition.tableid_map -> insert({hash, newNode});
+        uint32_t scid = mem_manager_->slabclassid(hash, sizeof(Node));
+        char *buf = mem_manager_->ItemAlloc(hash, scid);
+        if(buf != nullptr){
+            // Node *newNode = reinterpret_cast<Node*>(buf);
+            Node *newNode = new(buf) Node();
+            newNode -> table_id = memtableid;
+            newNode -> is_memtableid = is_memtableid;
+            newNode -> hash = hash;
+            partition.lru_queue -> push_front(newNode);
+            partition.tableid_map -> insert({hash, newNode});
+        }else{
+            if(partition.tableid_map -> size() != 0){
+                uint64_t evict_hash = partition.lru_queue -> tail -> hash;
+                partition.lru_queue -> remove(mem_manager_, partition.lru_queue -> tail);
+                partition.tableid_map -> erase(evict_hash);
+                partition.cache_evictions ++;
+            }
+        }
         partition.mutex.unlock();
     }
 
-    bool CacheIndex::remove(const Slice &key, uint64_t hash){
+    bool CacheIndex::remove(const Slice &key, uint64_t hash, uint64_t table_id, bool is_memtableid){
         CachePartition &partition = cache_index_[hash % partition_num_];
         partition.mutex.lock();
         auto it = partition.tableid_map -> find(hash);
         //if key is in the cache
         if(it != partition.tableid_map -> end()){
-            partition.lru_queue -> remove(it -> second);
-            partition.tableid_map -> erase(it -> first);
+            Node *node = it -> second;
+            bool is_memtableid_in_cache = node -> is_memtableid;
+            uint64_t table_id_in_cache = node -> table_id;
+            //avoid race condition that accidentally remove different value
+            if(is_memtableid_in_cache == is_memtableid && table_id == table_id_in_cache){
+                partition.lru_queue -> remove(mem_manager_, it -> second);
+                partition.tableid_map -> erase(it -> first);
+                partition.cache_evictions ++;
+                partition.mutex.unlock();
+                return true;
+            }
+        }
+        partition.mutex.unlock();
+        return false;
+    }
+
+    void CacheIndex::cache_stats(int *cache_hits, int *cache_misses, int *sizes, int *evictions){ 
+        for(int i = 0; i < partition_num_; i ++){
+            CachePartition &partition = cache_index_[i];
+            cache_hits[i] = partition.cache_hits.load();
+            cache_misses[i] = partition.cache_misses.load();
+            partition.mutex.lock();
+            sizes[i] = partition.tableid_map -> size();
+            evictions[i] = partition.cache_evictions;
             partition.mutex.unlock();
-            return true;
-        }else{
-            partition.mutex.unlock();
-            return false;
         }
     }
 
-    void CacheIndex::cache_stats(int *cache_hits, int *cache_misses, int *sizes){ 
-        for(int i = 0; i < partition_num_; i ++){
-            CachePartition &partition = cache_index_[i];
-            partition.mutex.lock();
-            cache_hits[i] = partition.cache_hits;
-            cache_misses[i] = partition.cache_misses;
-            sizes[i] = partition.tableid_map -> size();
-            partition.mutex.unlock();
-        }
+    void CacheIndex::incre_hit(const Slice &key, uint64_t hash){
+        CachePartition &partition = cache_index_[hash % partition_num_];
+        partition.cache_hits ++;
+        
+    }
+
+    void CacheIndex::incre_miss(const Slice &key, uint64_t hash){
+        CachePartition &partition = cache_index_[hash % partition_num_];
+        partition.cache_misses ++;
     }
 }

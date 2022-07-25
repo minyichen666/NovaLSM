@@ -57,7 +57,7 @@ namespace leveldb {
 
         // Insert key into the list.
         // REQUIRES: nothing that compares equal to key is currently in the list.
-        void Insert(const Key &key);
+        bool Insert(const Key &key);
 
         // Returns true iff an entry that compares equal to key is in the list.
         bool Contains(const Key &key) const;
@@ -376,14 +376,17 @@ namespace leveldb {
     }
 
     template<typename Key, class Comparator>
-    void SkipList<Key, Comparator>::Insert(const Key &key) {
+    bool SkipList<Key, Comparator>::Insert(const Key &key) {
         // TODO(opt): We can use a barrier-free variant of FindGreaterOrEqual()
         // here since Insert() is externally synchronized.
         Node *prev[kMaxHeight];
         Node *x = FindGreaterOrEqual(key, prev);
 
         // Our data structure does not allow duplicate insertion
-        assert(x == nullptr || !Equal(key, x->key));
+        // assert(x == nullptr || !Equal(key, x->key));
+        if(x != nullptr && Equal(key, x->key)){
+            return false;
+        }
 
         int height = RandomHeight();
         if (height > GetMaxHeight()) {
@@ -408,6 +411,7 @@ namespace leveldb {
             prev[i]->SetNext(i, x);
             nputs_per_level[i].fetch_add(1, std::memory_order_relaxed);
         }
+        return true;
     }
 
     template<typename Key, class Comparator>

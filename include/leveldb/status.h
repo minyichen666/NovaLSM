@@ -64,6 +64,14 @@ namespace leveldb {
             return Status(kIOError, msg, msg2);
         }
 
+        static Status SameKey(const Slice &msg, const Slice &msg2 = Slice()) {
+            return Status(kSameKey, msg, msg2);
+        }
+
+        static Status MemtableFullNoInsertion(const Slice &msg, const Slice &msg2 = Slice()) {
+            return Status(kMemtableFullNoInsertion, msg, msg2);
+        }
+
         // Returns true iff the status indicates success.
         bool ok() const { return (state_ == nullptr); }
 
@@ -82,6 +90,12 @@ namespace leveldb {
         // Returns true iff the status indicates an InvalidArgument.
         bool IsInvalidArgument() const { return code() == kInvalidArgument; }
 
+        // Returns true iff the status indicates an SameKey in writing memtable.
+        bool IsSameKey() const { return code() == kSameKey; }
+
+        // Returns true iff the status indicates memtables are full and can not insert key.
+        bool IsMemtableFullNoInsertion() const { return code() == kMemtableFullNoInsertion; }
+
         // Return a string representation of this status suitable for printing.
         // Returns the string "OK" for success.
         std::string ToString() const;
@@ -93,7 +107,9 @@ namespace leveldb {
             kCorruption = 2,
             kNotSupported = 3,
             kInvalidArgument = 4,
-            kIOError = 5
+            kIOError = 5,
+            kSameKey = 6,
+            kMemtableFullNoInsertion = 7
         };
 
         Code code() const {

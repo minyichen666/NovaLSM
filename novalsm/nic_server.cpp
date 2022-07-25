@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <db/db_impl.h>
+#include <limits.h>
 #include "leveldb/cache.h"
 
 #include "leveldb/write_batch.h"
@@ -152,50 +153,93 @@ namespace nova {
         return loaded_keys;
     }
 
-    void LoadThread::VerifyLoad() {
-        leveldb::EnvOptions env_option;
-        env_option.sstable_mode = leveldb::NovaSSTableMode::SSTABLE_DISK;
-        leveldb::PosixEnv *env = new leveldb::PosixEnv;
-        env->set_env_option(env_option);
-        leveldb::StocPersistentFileManager *stoc_file_manager = new leveldb::StocPersistentFileManager(env, mem_manager_,
-                                                                                                       NovaConfig::config->stoc_files_path,
-                                                                                                       NovaConfig::config->max_stoc_file_size);
-        auto client = new leveldb::StoCBlockClient(tid_, stoc_file_manager);
-        client->rdma_msg_handlers_ = async_workers_;
-        leveldb::ReadOptions read_options = {};
-        read_options.mem_manager = mem_manager_;
-        read_options.stoc_client = client;
+    void LoadThread::VerifyLoad(NICClientReqWorker *worker, uint32_t partitioned_num) {
+        // leveldb::EnvOptions env_option;
+        // env_option.sstable_mode = leveldb::NovaSSTableMode::SSTABLE_DISK;
+        // leveldb::PosixEnv *env = new leveldb::PosixEnv;
+        // env->set_env_option(env_option);
+        // leveldb::StocPersistentFileManager *stoc_file_manager = new leveldb::StocPersistentFileManager(env, mem_manager_,
+        //                                                                                                NovaConfig::config->stoc_files_path,
+        //                                                                                                NovaConfig::config->max_stoc_file_size);
+        // auto client = new leveldb::StoCBlockClient(tid_, stoc_file_manager);
+        // client->rdma_msg_handlers_ = async_workers_;
+        // uint32_t scid = mem_manager_->slabclassid(0, MAX_BLOCK_SIZE);
 
+        // leveldb::ReadOptions read_options = {};
+        // read_options.mem_manager = mem_manager_;
+        // read_options.stoc_client = client;
+
+        // read_options.thread_id = tid_;
+        // read_options.rdma_backing_mem = mem_manager_->ItemAlloc(0, scid);
+        // read_options.rdma_backing_mem_size = MAX_BLOCK_SIZE;
+        // read_options.cfg_id = 0;
+        // read_options.verify_checksums = false;
+
+        leveldb::ReadOptions read_options;
+        read_options.stoc_client = worker->stoc_client_;
+        read_options.mem_manager = worker->mem_manager_;
         read_options.thread_id = tid_;
-        read_options.verify_checksums = false;
-        std::vector<LTCFragment *> &frags = NovaConfig::config->cfgs[0]->fragments;
+        read_options.rdma_backing_mem = worker->rdma_backing_mem;
+        read_options.rdma_backing_mem_size = worker->rdma_backing_mem_size;
+        read_options.cfg_id = NovaConfig::config->current_cfg_id;
+
+        std::vector<LTCFragment *> &frags = NovaConfig::config->cfgs[NovaConfig::config->current_cfg_id]->fragments;
         for (int i = 0; i < frags.size(); i++) {
+
+            if (!frags[i]->is_ready_) {
+                frags[i]->is_ready_mutex_.Lock();
+                while (!frags[i]->is_ready_) {
+                    frags[i]->is_ready_signal_.Wait();
+                }
+                frags[i]->is_ready_mutex_.Unlock();
+            }
+
             if (frags[i]->ltc_server_id != NovaConfig::config->my_server_id) {
                 continue;
             }
+
+            uint64_t num_cache_entry = NovaConfig::config->num_cache_partition * NovaConfig::config->num_cache_partition_entry;
+            uint64_t num_memtable_entry = NovaConfig::config->memtable_size_mb * 1000 * NovaConfig::config->num_memtables;
+            uint64_t start = frags[i]->range.key_start;
+            uint64_t end  = frags[i]->range.key_end;
+
+            if(NovaConfig::config->cache_value_type = CacheValueType::SSTABLEID){
+                num_memtable_entry = UINT_MAX;
+            }
+
+            if(partitioned_num == -1){
+                
+            }else if(num_cache_entry <= frags[i]->range.key_end - frags[i]->range.key_start && num_cache_entry <= num_memtable_entry){
+                end = num_cache_entry + frags[i]->range.key_start;
+            }
+            else if(num_memtable_entry <= frags[i]->range.key_end - frags[i]->range.key_start && num_memtable_entry <= num_cache_entry){
+                end = num_memtable_entry + frags[i]->range.key_start;
+            }
+
+            uint64_t verify_start = (end - start) / NUM_VERIFY_LOADING_THREAD * partitioned_num + start;
+            uint64_t verify_end = (end - start) / NUM_VERIFY_LOADING_THREAD * (partitioned_num + 1) + start;
+
             leveldb::DB *db = reinterpret_cast<leveldb::DB *>(frags[i]->db);
             leveldb::DBImpl *dbi = reinterpret_cast<leveldb::DBImpl *>(frags[i]->db);
             NOVA_LOG(INFO) << fmt::format("t[{}] Verify range {} to {}", tid_,
-                                          frags[i]->range.key_start,
-                                          frags[i]->range.key_end);
+                                          verify_start,
+                                          verify_end);
 
-            for (uint64_t j = frags[i]->range.key_end - 1;
-                 j >= frags[i]->range.key_start; j--) {
-                auto v = static_cast<char>((j % 10) + 'a');
+            for (uint64_t j = verify_end - 1;
+                 j >= verify_start; j--) {
+                // auto v = static_cast<char>((j % 10) + 'a');
                 std::string key = std::to_string(j);
-                std::string expected_val(
-                        NovaConfig::config->load_default_value_size, v
-                );
+                // std::string expected_val(
+                //         NovaConfig::config->load_default_value_size, v
+                // );
                 std::string value;
-                leveldb::Status s = db->Get(read_options, key, &value);
-                NOVA_ASSERT(s.ok()) << s.ToString();
-
+                read_options.hash = j;
+                // leveldb::Status s = db->Get(read_options, key, &value);
+                // NOVA_ASSERT(s.ok()) << s.ToString();
                 leveldb::Status status = db->Get(read_options, key, &value);
-                //leveldb::Status status = dbi->Get(read_options, key, &value);
                 NOVA_ASSERT(status.ok())
                     << fmt::format("key:{} status:{}", key, status.ToString());
-                NOVA_ASSERT(expected_val.compare(value) == 0) << value;
-
+                // NOVA_ASSERT(expected_val.compare(value) == 0) << value;
 
                 if (j == frags[i]->range.key_start) {
                     break;
@@ -203,23 +247,9 @@ namespace nova {
             }
             NOVA_LOG(INFO)
                 << fmt::format("t[{}]: Success: Verified range {} to {}", tid_,
-                               frags[i]->range.key_start,
-                               frags[i]->range.key_end);
+                               verify_start,
+                               verify_end);
 
-            int cache_hits[32];
-            int cache_misses[32];
-            int sizes[32];
-            uint64_t cache_hit = 0, cache_miss = 0, cache_size = 0;
-            dbi -> QueryCachePartitionStats(cache_hits, cache_misses, sizes);
-            for(int i = 0; i < 32; i ++){
-                cache_hit += cache_hits[i];
-                cache_miss += cache_misses[i];
-                cache_size += sizes[i];
-            }
-            NOVA_LOG(INFO)
-            << fmt::format("partition {}: cache hits : {}, cache misses : {}, sizes : {}", i, cache_hit,
-                            cache_miss,
-                            cache_size);
         }
     }
 
@@ -238,7 +268,6 @@ namespace nova {
         timeval end{};
         gettimeofday(&end, nullptr);
         throughput = puts / std::max((int) (end.tv_sec - start.tv_sec), 1);
-        // VerifyLoad();
     }
 
     void NICServer::LoadData() {
@@ -804,6 +833,53 @@ namespace nova {
                 sleep(1);
             }
         }
+
+        if (NovaConfig::config->recover_dbs && NovaConfig::config->enable_cache_index) {
+            uint32_t nverify_threads = NUM_VERIFY_LOADING_THREAD;
+            std::vector<std::thread> verify_threads;
+            std::vector<LoadThread *> ts;
+            uint32_t current_db_id = 0;
+            for (int i = 0; i < nverify_threads; i++) {
+                std::set<uint32_t> dbids;
+                for (int j = 0; j < dbs_.size(); j++) {
+                    dbids.insert(current_db_id);
+                    current_db_id += 1;
+                }
+                auto t = new LoadThread(fg_rdma_msg_handlers, mem_manager, dbids, i);
+                ts.push_back(t);
+                verify_threads.emplace_back(std::thread(&LoadThread::VerifyLoad, t, conn_workers[i], i));
+            }
+
+            for (int i = 0; i < nverify_threads; i++) {
+                verify_threads[i].join();
+            }
+            uint64_t memtable_entry = NovaConfig::config->memtable_size_mb * 1000 * NovaConfig::config->num_memtables;
+            uint64_t cache_entry = NovaConfig::config->num_cache_partition * NovaConfig::config->num_cache_partition_entry;
+            std::vector<LTCFragment *> &frags = NovaConfig::config->cfgs[NovaConfig::config->current_cfg_id]->fragments;
+            for (int i = 0; i < frags.size(); i++) {
+                leveldb::DBImpl *dbi = reinterpret_cast<leveldb::DBImpl *>(frags[i]->db);
+
+                int cache_hits[NovaConfig::config->num_cache_partition];
+                int cache_misses[NovaConfig::config->num_cache_partition];
+                int sizes[NovaConfig::config->num_cache_partition];
+                int cache_evictions[NovaConfig::config->num_cache_partition];
+                uint64_t cache_size = 0;
+                dbi -> QueryCachePartitionStats(cache_hits, cache_misses, sizes, cache_evictions);
+
+                for(int k = 0; k < NovaConfig::config->num_cache_partition; k ++){
+                    cache_size += sizes[k];
+                }
+
+                NOVA_LOG(INFO)
+                    << fmt::format("cache size:{} cache capacity:{} memtable capacity:{}", cache_size, cache_entry, memtable_entry);
+                NOVA_ASSERT(cache_size >= memtable_entry * 0.75 || cache_size >= cache_entry * 0.75)
+                        << fmt::format("cache size:{} cache capacity:{} memtable capacity:{}", cache_size, cache_entry, memtable_entry);
+            }
+            NOVA_LOG(INFO)
+                    << fmt::format("Success: Warmed up the cache");
+
+        }
+
 
         // Start connection threads in the end after we have loaded all data.
         for (int i = 0; i < NovaConfig::config->num_conn_workers; i++) {

@@ -69,7 +69,7 @@ namespace leveldb {
         // Add an entry into memtable that maps key to value at the
         // specified sequence number and with the specified type.
         // Typically value will be empty if type==kTypeDeletion.
-        void Add(SequenceNumber seq, ValueType type, const Slice &key,
+        bool Add(SequenceNumber seq, ValueType type, const Slice &key,
                  const Slice &value);
 
         // If memtable contains a value for key, store it in *value and return true.
@@ -154,6 +154,7 @@ namespace leveldb {
         std::atomic_int_fast32_t nentries_;
         uint32_t memtable_size_ = 0;
         uint32_t number_of_pending_writes_ = 0;
+        bool contains_ktypevalue = false;
     };
 
     struct MemTableLogFilePair {
