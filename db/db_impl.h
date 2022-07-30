@@ -175,6 +175,7 @@ namespace leveldb {
                 const std::vector<leveldb::ReplicationPair> &results, uint32_t stoc_server_id, int level, StoCClient* client) override ;
 
         std::atomic_bool is_loading_db_;
+        std::atomic_bool is_warming_cache_ = true;
 
     private:
         void ObtainStoCFilesOfSSTable(std::vector<std::string> *files_to_delete,

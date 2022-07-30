@@ -8,13 +8,10 @@
 #include <unordered_map>
 #include <memory>
 #include "common/nova_mem_manager.h"
+#include "common/nova_config.h"
 
 
 namespace leveldb {
-
-    #define NODE_SIZE_BYTE 25
-    #define PARTITION_SIZE_BYTE 148
-    #define LINKEDLIST_SIZE_BYTE 8
 
     struct Node{
         Node *prev;
@@ -27,17 +24,17 @@ namespace leveldb {
 
     class LinkedList{
         public:
-            LinkedList() : head(nullptr), tail(nullptr){};
+            LinkedList() : head(nullptr), tail(nullptr), size_(0) {};
             void push_front(Node *node);
             void remove_without_freeing(Node *node);
             void remove(MemManager *mem_manager, Node *node);
             Node *head;
             Node *tail;
+            uint64_t size_;
             // ~LinkedList();
     };
 
     struct CachePartition{
-        std::unordered_map<uint64_t, Node*> *tableid_map; //store memtable_id/sstable_id/tombstone in each cache partition
         uint32_t size; // define the size for each partition 
         std::mutex mutex;
         LinkedList *lru_queue; //Doubly linked list for LRU eviction for each partition
@@ -68,6 +65,7 @@ namespace leveldb {
             uint32_t partition_num_; //the size of the cache_index
             CachePartition *cache_index_; //an array of cache partition
             MemManager *mem_manager_;
+            Node **tableid_map; //store memtable_id/sstable_id/tombstone in each cache partition
     };
 }
 

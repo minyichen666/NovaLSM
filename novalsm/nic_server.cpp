@@ -203,7 +203,7 @@ namespace nova {
             uint64_t start = frags[i]->range.key_start;
             uint64_t end  = frags[i]->range.key_end;
 
-            if(NovaConfig::config->cache_value_type = CacheValueType::SSTABLEID){
+            if(NovaConfig::config->cache_value_type == CacheValueType::SSTABLEID){
                 num_memtable_entry = UINT_MAX;
             }
 
@@ -342,7 +342,7 @@ namespace nova {
 
         uint32_t num_mem_partitions = 1;
         NovaConfig::config->num_mem_partitions = num_mem_partitions;
-        uint64_t slab_size_mb = NovaConfig::config->manifest_file_size / 1024 / 1024;
+        uint64_t slab_size_mb = NovaConfig::config->manifest_file_size / 1024 / 1024 * 12;
         mem_manager = new NovaMemManager(cache_buf,
                                          num_mem_partitions,
                                          NovaConfig::config->mem_pool_size_gb,
@@ -874,6 +874,7 @@ namespace nova {
                     << fmt::format("cache size:{} cache capacity:{} memtable capacity:{}", cache_size, cache_entry, memtable_entry);
                 NOVA_ASSERT(cache_size >= memtable_entry * 0.75 || cache_size >= cache_entry * 0.75)
                         << fmt::format("cache size:{} cache capacity:{} memtable capacity:{}", cache_size, cache_entry, memtable_entry);
+                dbi -> is_warming_cache_ = false;
             }
             NOVA_LOG(INFO)
                     << fmt::format("Success: Warmed up the cache");

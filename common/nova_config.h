@@ -241,6 +241,7 @@ namespace nova {
         uint32_t num_cache_partition = 0;
         uint64_t num_cache_partition_entry = 0;
         bool memtable_eviction = true;
+        uint64_t recordcount = 0;
         //bool enable_os_cache = true;
 
         LTCMigrationPolicy ltc_migration_policy = LTCMigrationPolicy::IMMEDIATE;

@@ -172,6 +172,7 @@ namespace leveldb {
         }
         uint32_t scid = mem_manager_->slabclassid(nova::NovaConfig::config -> num_cache_partition, sizeof(CacheIndex));
         mem_manager_->FreeItem(nova::NovaConfig::config -> num_cache_partition, (char*)cache_index_, scid);
+        // delete cache_index_;
     }
 
     void DBImpl::EvictFileFromCache(uint64_t file_number) {

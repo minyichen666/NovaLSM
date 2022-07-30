@@ -131,6 +131,7 @@ DEFINE_uint32(num_cache_partition, 0, "Number  of partition in cache index");
 DEFINE_uint64(num_cache_partition_entry, 0, "Number of entry in each cache index partition");
 DEFINE_string(cache_value_type, "HYBRID", "Kind of table id stored in cache index");
 DEFINE_bool(memtable_eviction, true, "evict cache entry when memtable is full");
+DEFINE_uint64(recordcount, 0, "number of key in database");
 
 
 NovaConfig *NovaConfig::config;
@@ -251,6 +252,7 @@ int main(int argc, char *argv[]) {
     NovaConfig::config->memtable_eviction = FLAGS_memtable_eviction;
     NovaConfig::config->num_cache_partition = FLAGS_num_cache_partition;
     NovaConfig::config->num_cache_partition_entry = FLAGS_num_cache_partition_entry;
+    NovaConfig::config->recordcount = FLAGS_recordcount;
 
     if(FLAGS_cache_value_type == "MEMTABLEID"){
         NovaConfig::config->cache_value_type = CacheValueType::MEMTABLEID;

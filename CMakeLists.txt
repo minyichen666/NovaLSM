@@ -11,7 +11,7 @@ add_compile_options(-fexceptions)
 
 #set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_CXX_COMPILER /usr/bin/g++)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if (WIN32)
@@ -380,8 +380,8 @@ target_link_libraries(leveldb ibverbs event fmt)
 add_executable(nova_server_main "novalsm/nova_server_main.cpp")
 target_link_libraries(nova_server_main ${GFLAGS} leveldb)
 
-add_executable(nova_index_main "novalsm/nova_index_main.cpp")
-target_link_libraries(nova_index_main leveldb)
+#add_executable(nova_index_main "novalsm/nova_index_main.cpp")
+#target_link_libraries(nova_index_main leveldb)
 
 #add_executable(file_reader "novalsm/file_reader.cpp")
 #target_link_libraries(file_reader -lgflags leveldb)

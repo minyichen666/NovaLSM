@@ -8,6 +8,7 @@
 
 #include "nova_mem_manager.h"
 #include "nova_common.h"
+#include "db/cache_index.h"
 
 namespace nova {
 
@@ -66,7 +67,7 @@ namespace nova {
 //        uint64_t slab_sizes[] = {8192, 1024 };
 
         uint64_t size = 1200;
-        for (int i = 0; i < MAX_NUMBER_OF_SLAB_CLASSES; i++) {
+        for (int i = 1; i < MAX_NUMBER_OF_SLAB_CLASSES - 1; i++) {
             slab_classes_[i].size = size;
             slab_classes_[i].nitems_per_slab = slab_size / size;
             if (pid == 0) {
@@ -79,6 +80,8 @@ namespace nova {
                 size = slab_size;
             }
         }
+        slab_classes_[0].size = sizeof(leveldb::Node);
+        slab_classes_[0].nitems_per_slab = slab_size / slab_classes_[0].size;
         uint64_t ndataslabs = data_size / slab_size;
         if (pid == 0) {
             NOVA_LOG(INFO)
