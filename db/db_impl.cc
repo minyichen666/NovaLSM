@@ -2096,7 +2096,7 @@ namespace leveldb {
         uint64_t table_id = cache_index_->get(key, options.hash, is_memtableid);
         uint32_t memtableid = table_id;
         //if table_id is a memtable id
-        if (memtableid != 0 && is_memtableid && nova::NovaConfig::config -> cache_value_type != nova::CacheValueType::SSTABLEID) {
+        if (memtableid != -1 && is_memtableid && nova::NovaConfig::config -> cache_value_type != nova::CacheValueType::SSTABLEID) {
             NOVA_ASSERT(memtableid < MAX_LIVE_MEMTABLES) << memtableid;
             memtable = versions_->mid_table_mapping_[memtableid]->RefMemTable();
             if (memtable != nullptr) {
@@ -2109,7 +2109,6 @@ namespace leveldb {
                     return Status::OK();
                 }
             } else {
-                // NOVA_LOG(rdmaio::INFO) << fmt::format("cache miss key{}", options.hash);
                 cache_index_ -> incre_miss(key, options.hash);
                 cache_index_ -> remove(key, options.hash, table_id, true);
             }
@@ -2117,7 +2116,7 @@ namespace leveldb {
         //if table_id is a SSTable id
         uint64_t fn = table_id;
         SequenceNumber latest_seq = 0;
-        if(fn != 0 && !is_memtableid && nova::NovaConfig::config -> cache_value_type != nova::CacheValueType::MEMTABLEID){
+        if(fn != -1 && !is_memtableid && nova::NovaConfig::config -> cache_value_type != nova::CacheValueType::MEMTABLEID){
             std::vector<uint64_t> fns;
             fns.push_back(fn);
             //reuse get for l0 SSTable
@@ -2138,11 +2137,10 @@ namespace leveldb {
             }
         }
 
-        if(table_id == 0){
+        if(table_id == -1){
             cache_index_ -> incre_miss(key, options.hash);
         }
         // if table_id is a tombstone
-
 
         //Search L1 and above
         Version::GetStats stats = {};
@@ -2694,7 +2692,7 @@ namespace leveldb {
                 partition->active_memtable = nullptr;
             }
             //If memtable only contains cache key value pair just remove it and don't flush
-            if (partition->available_slots.empty() && nova::NovaConfig::config->memtable_eviction) {
+            if (partition->available_slots.empty() && (nova::NovaConfig::config->memtable_eviction || is_warming_cache_) ) {
                 if (imm_slot != -1) {
                     uint32_t immid = partitioned_imms_[imm_slot];
                     NOVA_ASSERT(immid != 0);
@@ -2763,7 +2761,8 @@ namespace leveldb {
                     partition->mutex.Unlock();
                     return Status::IOError("No Write Stall");
                 }
-            }else if(partition->available_slots.empty() && !nova::NovaConfig::config->memtable_eviction){
+                //If nova is running, and no memtable evition, stop inserting key into memtable
+            }else if(partition->available_slots.empty() && !nova::NovaConfig::config->memtable_eviction && !is_warming_cache_){
                 partition->mutex.Unlock();
                 return Status::MemtableFullNoInsertion("Memtables are full, stop cache entry insertion");
             }

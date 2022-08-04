@@ -23,7 +23,8 @@
 
 namespace nova {
 
-    #define NUM_VERIFY_LOADING_THREAD 25
+    #define NUM_VERIFY_LOADING_THREAD 10
+    #define NUM_REGION 100
     class NICClientReqWorker;
 
     class LoadThread {
@@ -36,7 +37,7 @@ namespace nova {
 
         uint64_t throughput = 0;
 
-        void VerifyLoad(NICClientReqWorker *worker, uint32_t partitioned_num = -1);
+        void VerifyLoad(NICClientReqWorker *worker, uint32_t partitioned_num, uint32_t region);
 
     private:
         uint64_t LoadDataWithRangePartition();

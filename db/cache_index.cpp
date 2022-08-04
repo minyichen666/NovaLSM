@@ -124,7 +124,7 @@ namespace leveldb {
             return table_id;
         }else{
             partition.mutex.unlock();
-            return 0;
+            return -1;
         }
     }
 
@@ -171,9 +171,6 @@ namespace leveldb {
                 tableid_map[evict_hash] = nullptr;
                 partition.cache_evictions ++;
                 partition.lru_queue -> size_ --;
-            }else{
-                NOVA_LOG(rdmaio::INFO)
-            << fmt::format("Node Allocate Fails");
             }
         }
         partition.mutex.unlock();

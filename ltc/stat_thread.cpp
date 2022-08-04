@@ -322,16 +322,16 @@ namespace nova {
                 evictions_in_10s[i] = cache_eviction - evictions_all_prev[i];
                 evictions_all_prev[i] = cache_eviction;
 
-                output += "cache_hits-p,";
-                for (int i = 0; i < nova_dbs.size(); i++) {
-                    output += std::to_string(parition_num);
-                    output += ",";
-                    for(int j = 0; j < parition_num; j ++){
-                        output += std::to_string(cache_hits[j]);
-                        output += ",";
-                    }
-                }
-                output += "\n";
+                // output += "cache_hits-p,";
+                // for (int i = 0; i < nova_dbs.size(); i++) {
+                //     output += std::to_string(parition_num);
+                //     output += ",";
+                //     for(int j = 0; j < parition_num; j ++){
+                //         output += std::to_string(cache_hits[j]);
+                //         output += ",";
+                //     }
+                // }
+                // output += "\n";
 
                 output += "cache_size-p,";
                 for (int i = 0; i < nova_dbs.size(); i++) {
