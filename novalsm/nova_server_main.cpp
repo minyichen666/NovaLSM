@@ -125,6 +125,15 @@ DEFINE_int32(num_migration_threads, 1, "Number of migration threads");
 DEFINE_string(ltc_migration_policy, "base", "immediate/base");
 DEFINE_bool(use_ordered_flush, false, "use ordered flush");
 
+DEFINE_bool(enable_cache_index, false, "use cache index");
+//DEFINE_bool(enable_os_cache, true, "use operating system cache to read file");
+DEFINE_uint32(num_cache_partition, 0, "Number  of partition in cache index");
+DEFINE_uint64(num_cache_partition_entry, 0, "Number of entry in each cache index partition");
+DEFINE_string(cache_value_type, "HYBRID", "Kind of table id stored in cache index");
+DEFINE_bool(memtable_eviction, true, "evict cache entry when memtable is full");
+DEFINE_uint64(recordcount, 0, "number of key in database");
+
+
 NovaConfig *NovaConfig::config;
 std::atomic_int_fast32_t leveldb::EnvBGThread::bg_flush_memtable_thread_id_seq;
 std::atomic_int_fast32_t nova::StorageWorker::storage_file_number_seq;
@@ -237,6 +246,21 @@ int main(int argc, char *argv[]) {
     NovaConfig::config->sstable_size = FLAGS_sstable_size_mb * 1024 * 1024;
     NovaConfig::config->use_local_disk = FLAGS_use_local_disk;
     NovaConfig::config->num_tinyranges_per_subrange = FLAGS_num_tinyranges_per_subrange;
+
+    NovaConfig::config->enable_cache_index = FLAGS_enable_cache_index;
+    //NovaConfig::config->enable_os_cache = FLAGS_enable_os_cache;
+    NovaConfig::config->memtable_eviction = FLAGS_memtable_eviction;
+    NovaConfig::config->num_cache_partition = FLAGS_num_cache_partition;
+    NovaConfig::config->num_cache_partition_entry = FLAGS_num_cache_partition_entry;
+    NovaConfig::config->recordcount = FLAGS_recordcount;
+
+    if(FLAGS_cache_value_type == "MEMTABLEID"){
+        NovaConfig::config->cache_value_type = CacheValueType::MEMTABLEID;
+    } else if(FLAGS_cache_value_type == "SSTABLEID"){
+        NovaConfig::config->cache_value_type = CacheValueType::SSTABLEID;
+    } else if(FLAGS_cache_value_type == "HYBRID"){
+        NovaConfig::config->cache_value_type = CacheValueType::HYBRID;
+    }
 
     if (FLAGS_scatter_policy == "random") {
         NovaConfig::config->scatter_policy = ScatterPolicy::RANDOM;

@@ -11,7 +11,7 @@ add_compile_options(-fexceptions)
 
 #set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_CXX_COMPILER /usr/bin/g++)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if (WIN32)
@@ -262,6 +262,9 @@ target_sources(leveldb
         util/skewed_latest_generator.h
         util/utils.h
 
+        db/cache_index.cpp
+        db/cache_index.h
+
         # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
         $<$<VERSION_GREATER:CMAKE_VERSION,3.2>:PUBLIC>
         "${LEVELDB_PUBLIC_INCLUDE_DIR}/c.h"
@@ -377,26 +380,29 @@ target_link_libraries(leveldb ibverbs event fmt)
 add_executable(nova_server_main "novalsm/nova_server_main.cpp")
 target_link_libraries(nova_server_main ${GFLAGS} leveldb)
 
-add_executable(file_reader "novalsm/file_reader.cpp")
-target_link_libraries(file_reader -lgflags leveldb)
+#add_executable(nova_index_main "novalsm/nova_index_main.cpp")
+#target_link_libraries(nova_index_main leveldb)
 
-add_executable(nova_server_main_debug "novalsm/nova_server_main.cpp")
-target_link_libraries(nova_server_main_debug -lgflags leveldb -pg)
+#add_executable(file_reader "novalsm/file_reader.cpp")
+#target_link_libraries(file_reader -lgflags leveldb)
 
-add_executable(nova_subrange_sim "novalsm/nova_subrange_sim_test.cpp")
-target_link_libraries(nova_subrange_sim -lgflags leveldb -pg)
+#add_executable(nova_server_main_debug "novalsm/nova_server_main.cpp")
+#target_link_libraries(nova_server_main_debug -lgflags leveldb -pg)
 
-add_executable(scatter_bench "benchmarks/scatter_bench.cpp")
-target_link_libraries(scatter_bench -lgflags leveldb)
+#add_executable(nova_subrange_sim "novalsm/nova_subrange_sim_test.cpp")
+#target_link_libraries(nova_subrange_sim -lgflags leveldb -pg)
 
-add_executable(memtable_bench "bench_memtable/memtable_bench.cpp")
-target_link_libraries(memtable_bench -lgflags leveldb)
+#add_executable(scatter_bench "benchmarks/scatter_bench.cpp")
+#target_link_libraries(scatter_bench -lgflags leveldb)
 
-add_executable(version_set_test "db/version_set_test.cc")
-target_link_libraries(version_set_test -lgflags leveldb)
+#add_executable(memtable_bench "bench_memtable/memtable_bench.cpp")
+#target_link_libraries(memtable_bench -lgflags leveldb)
 
-add_executable(bloom_test "util/bloom_test.cc")
-target_link_libraries(bloom_test -lgflags leveldb)
+#add_executable(version_set_test "db/version_set_test.cc")
+#target_link_libraries(version_set_test -lgflags leveldb)
 
-add_executable(filter_block_test "table/filter_block_test.cc")
-target_link_libraries(filter_block_test -lgflags leveldb)
+#add_executable(bloom_test "util/bloom_test.cc")
+#target_link_libraries(bloom_test -lgflags leveldb)
+
+#add_executable(filter_block_test "table/filter_block_test.cc")
+#target_link_libraries(filter_block_test -lgflags leveldb)

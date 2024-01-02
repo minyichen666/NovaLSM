@@ -468,7 +468,6 @@ namespace leveldb {
                                                    &state->saver,
                                                    SaveValue);
                 (*state->num_searched_files) += 1;
-
                 if (!state->s.ok()) {
                     state->found = true;
                     return false;
@@ -478,13 +477,16 @@ namespace leveldb {
                         return true;  // Keep searching in other files
                     case kFound:
                         state->found = true;
+                        state->stats->fn = f->number;
                         return false;
                     case kDeleted:
+                        state->stats->fn = f->number;
                         return false;
                     case kCorrupt:
                         state->s =
                                 Status::Corruption("corrupted key for ",
                                                    state->saver.user_key);
+                        state->stats->fn = f->number;
                         state->found = true;
                         return false;
                 }

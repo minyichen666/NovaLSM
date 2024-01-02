@@ -207,6 +207,14 @@ function run_bench() {
 	done
 
 	sleep 30
+	for s in ${servers[@]}
+	do
+		while ! ssh -oStrictHostKeyChecking=no $m "cat $results/server-node-$s-out | grep Warmed"
+		do
+			echo "waiting for $m"
+			sleep 10
+		done
+	done
 	for c in ${clis[@]}
 	do
 		for i in $(seq 1 $nclients_per_server);

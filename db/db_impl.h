@@ -34,6 +34,7 @@
 #include "compaction.h"
 #include "lookup_index.h"
 #include "range_index.h"
+#include "cache_index.h"
 
 #include "log/log_recovery.h"
 
@@ -112,6 +113,8 @@ namespace leveldb {
 
         void QueryDBStats(DBStats *db_stats) override;
 
+        void QueryCachePartitionStats(int *cache_hits, int *cache_misses, int* sizes, int *cache_evictions);
+
         Status Recover() override;
 
         Status
@@ -163,17 +166,24 @@ namespace leveldb {
         nova::StoCInMemoryLogFileManager *log_manager_ = nullptr;
         std::vector<EnvBGThread *> bg_flush_memtable_threads_;
 
+        uint64_t num_cache_partition_entry = 0;
+        uint32_t num_cache_partition = 0;
+
         void ScheduleFileDeletionTask();
 
         void UpdateFileMetaReplicaLocations(
                 const std::vector<leveldb::ReplicationPair> &results, uint32_t stoc_server_id, int level, StoCClient* client) override ;
 
         std::atomic_bool is_loading_db_;
+        bool is_warming_cache_ = true;
 
     private:
         void ObtainStoCFilesOfSSTable(std::vector<std::string> *files_to_delete,
                                       std::unordered_map<uint32_t, std::vector<SSTableStoCFilePair>> *server_pairs,
                                       const FileMetaData &meta) const;
+
+        Status GetWithCacheIndex(const ReadOptions &options, const Slice &key,
+                                  std::string *value, Version* current);
 
         Status GetWithLookupIndex(const ReadOptions &options, const Slice &key,
                                   std::string *value);
@@ -337,7 +347,10 @@ namespace leveldb {
 
         // key -> memtable-id.
         LookupIndex *lookup_index_ = nullptr;
+        CacheIndex *cache_index_ = nullptr;
         RangeIndexManager *range_index_manager_ = nullptr;
+
+        uint32_t num_try_update_coldkey = 3;
 
         // memtable pool.
         std::vector<AtomicMemTable *> active_memtables_;
@@ -373,8 +386,17 @@ namespace leveldb {
                                   bool should_wait, uint64_t last_sequence,
                                   SubRange *subrange);
 
+        Status WriteStaticPartitionNoWriteStall(const leveldb::WriteOptions &options,
+                                  const leveldb::Slice &key,
+                                  const leveldb::Slice &value,
+                                  uint32_t partition_id,
+                                  uint64_t last_sequence,
+                                  SubRange *subrange,
+                                  uint32_t &cache_memtable_id);
+
         StoCWritableFileClient *manifest_file_ = nullptr;
         unsigned int rand_seed_ = 0;
+        MemManager *mem_manager_;
     };
 
 // Sanitize db options.  The caller should delete result.info_log if

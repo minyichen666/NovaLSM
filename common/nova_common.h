@@ -32,8 +32,8 @@
 #include <stdexcept>
 
 namespace nova {
-#define RDMA_POLL_MIN_TIMEOUT_US 10
-#define RDMA_POLL_MAX_TIMEOUT_US 10
+#define RDMA_POLL_MIN_TIMEOUT_US 0
+#define RDMA_POLL_MAX_TIMEOUT_US 0
 #define LEVELDB_TABLE_PADDING_SIZE_MB 2
 #define MAX_BLOCK_SIZE 10240
     using namespace std;
@@ -63,6 +63,11 @@ namespace nova {
         std::atomic_int_fast64_t total_disk_reads;
         std::atomic_bool is_ready_to_process_requests;
         static NovaGlobalVariables global;
+    };
+
+
+    enum CacheValueType {
+        MEMTABLEID, SSTABLEID, HYBRID
     };
 
     enum NovaRDMAPartitionMode {

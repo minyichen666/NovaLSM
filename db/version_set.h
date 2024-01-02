@@ -110,6 +110,7 @@ namespace leveldb {
         struct GetStats {
             FileMetaData *seek_file;
             int seek_file_level;
+            uint64_t fn;
         };
 
         bool NeedsCompaction() {

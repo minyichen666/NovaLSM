@@ -139,12 +139,18 @@ namespace leveldb {
         start_coordinated_compaction_ = false;
         terminate_coordinated_compaction_ = false;
         start_compaction_ = true;
+        mem_manager_ = raw_options.mem_manager;
         if (options_.enable_lookup_index) {
             lookup_index_ = new LookupIndex(
                     options_.upper_key - options_.lower_key);
-            for (int i = 0; i < options_.upper_key - options_.lower_key; i++) {
-                lookup_index_->Insert(Slice(), i, 0);
-            }
+        }
+        if(nova::NovaConfig::config -> enable_cache_index){
+            num_cache_partition = nova::NovaConfig::config -> num_cache_partition;
+            num_cache_partition_entry = nova::NovaConfig::config -> num_cache_partition_entry;
+            uint32_t scid = mem_manager_->slabclassid(nova::NovaConfig::config -> num_cache_partition, sizeof(CacheIndex));
+            char *buf = mem_manager_->ItemAlloc(nova::NovaConfig::config -> num_cache_partition, scid);
+            // cache_index_ = reinterpret_cast<CacheIndex*> (buf);
+            cache_index_ = new(buf) CacheIndex(num_cache_partition, num_cache_partition_entry, mem_manager_);
         }
         nova::ParseDBIndexFromDBName(dbname_, &dbid_);
     }
@@ -164,6 +170,9 @@ namespace leveldb {
         if (owns_cache_) {
             delete options_.block_cache;
         }
+        uint32_t scid = mem_manager_->slabclassid(nova::NovaConfig::config -> num_cache_partition, sizeof(CacheIndex));
+        mem_manager_->FreeItem(nova::NovaConfig::config -> num_cache_partition, (char*)cache_index_, scid);
+        // delete cache_index_;
     }
 
     void DBImpl::EvictFileFromCache(uint64_t file_number) {
@@ -1061,21 +1070,21 @@ namespace leveldb {
             Status s;
             Iterator *iter = imm->NewIterator(TraceType::IMMUTABLE_MEMTABLE, AccessCaller::kCompaction);
             nova::NovaGlobalVariables::global.generated_memtable_sizes += imm->ApproximateMemoryUsage();
-            s = BuildTable(dbname_, env_, options_, table_cache_, iter, &meta, bg_thread, prune_memtable);
-            NOVA_ASSERT(s.ok()) << s.ToString();
+            s = BuildTable(dbname_, env_, options_, table_cache_, iter, &meta, bg_thread, prune_memtable, cache_index_, imm -> memtableid());
+            // NOVA_ASSERT(s.ok()) << s.ToString();
             delete iter;
             // Note that if file_size is zero, the file has been deleted and
             // should not be added to the manifest.
             int level = 0;
             NOVA_ASSERT(imm->memtableid() != 0);
             edit->AddFile(level, {imm->memtableid()},
-                          meta.number,
-                          meta.file_size,
-                          meta.converted_file_size,
-                          meta.flush_timestamp,
-                          meta.smallest,
-                          meta.largest,
-                          meta.block_replica_handles, meta.parity_block_handle);
+                        meta.number,
+                        meta.file_size,
+                        meta.converted_file_size,
+                        meta.flush_timestamp,
+                        meta.smallest,
+                        meta.largest,
+                        meta.block_replica_handles, meta.parity_block_handle);
             nova::NovaGlobalVariables::global.written_memtable_sizes += meta.file_size;
         }
     }
@@ -1256,7 +1265,7 @@ namespace leveldb {
             Iterator *iter = imm->NewIterator(TraceType::IMMUTABLE_MEMTABLE,
                                               AccessCaller::kCompaction);
             s = BuildTable(dbname_, env_, options_, table_cache_, iter,
-                           &meta, bg_thread, false);
+                           &meta, bg_thread, false, cache_index_);
             NOVA_ASSERT(s.ok()) << s.ToString();
             delete iter;
             // Note that if file_size is zero, the file has been deleted and
@@ -2076,6 +2085,110 @@ namespace leveldb {
         return GetWithRangeIndex(options, key, value);
     }
 
+    Status DBImpl::GetWithCacheIndex(const ReadOptions &options, const Slice &key,
+                                  std::string *value, Version *current) {
+        Status s = Status::NotFound(Slice());
+        SequenceNumber snapshot = kMaxSequenceNumber;
+        LookupKey lkey(key, snapshot);
+        NOVA_ASSERT(cache_index_);
+        AtomicMemTable *memtable = nullptr;
+        bool is_memtableid;
+        uint64_t table_id = cache_index_->get(key, options.hash, is_memtableid);
+        uint32_t memtableid = table_id;
+        //if table_id is a memtable id
+        if (memtableid != -1 && is_memtableid && nova::NovaConfig::config -> cache_value_type != nova::CacheValueType::SSTABLEID) {
+            NOVA_ASSERT(memtableid < MAX_LIVE_MEMTABLES) << memtableid;
+            memtable = versions_->mid_table_mapping_[memtableid]->RefMemTable();
+            if (memtable != nullptr) {
+                NOVA_ASSERT(memtable->memtable_->memtableid() == memtableid);
+                bool found = memtable->memtable_->Get(lkey, value, &s);
+                versions_->mid_table_mapping_[memtableid]->Unref(dbname_);
+                if (found) {
+                    number_of_memtable_hits_ += 1;
+                    cache_index_ -> incre_hit(key, options.hash);
+                    return Status::OK();
+                }
+            } else {
+                cache_index_ -> incre_miss(key, options.hash);
+                cache_index_ -> remove(key, options.hash, table_id, true);
+            }
+        }
+        //if table_id is a SSTable id
+        uint64_t fn = table_id;
+        SequenceNumber latest_seq = 0;
+        if(fn != -1 && !is_memtableid && nova::NovaConfig::config -> cache_value_type != nova::CacheValueType::MEMTABLEID){
+            std::vector<uint64_t> fns;
+            fns.push_back(fn);
+            //reuse get for l0 SSTable
+            s = current -> Get(options, fns, lkey, &latest_seq,
+                                        value,
+                                        &number_of_files_to_search_for_get_);
+            if(s.IsIOError()){
+                cache_index_ -> incre_miss(key, options.hash);
+                cache_index_->remove(key, options.hash, table_id, true);
+            }
+            else if(s.ok()){
+                //  upgrade if CacheValueType is Hybrid
+                if(nova::NovaConfig::config -> cache_value_type != nova::CacheValueType::HYBRID){
+                    
+                }
+                cache_index_ -> incre_hit(key, options.hash);
+                return s;
+            }
+        }
+
+        if(table_id == -1){
+            cache_index_ -> incre_miss(key, options.hash);
+        }
+        // if table_id is a tombstone
+
+        //Search L1 and above
+        Version::GetStats stats = {};
+        SequenceNumber l1seq;
+        s = current->Get(options, lkey, &l1seq, value, &stats, GetSearchScope::kL1AndAbove,
+                             &number_of_files_to_search_for_get_);
+        NOVA_ASSERT(s.ok())
+            << fmt::format("key:{} val:{} seq:{} status:{} file number:{}",
+                           key.ToString(), value->size(),
+                           s.ToString(),
+                           current->DebugString(), stats.fn);
+        //always insert SSTable id disregarding levels.
+        WriteOptions write_options;
+        write_options.stoc_client = options.stoc_client;
+        write_options.local_write = false;
+        write_options.thread_id = options.thread_id;
+        write_options.rand_seed = &rand_seed_;
+        write_options.hash = options.hash;
+        write_options.rdma_backing_mem = options.rdma_backing_mem;
+        write_options.rdma_backing_mem_size = options.rdma_backing_mem_size;
+        //write_options.is_loading_db = false;
+        if(s.ok()){
+            if(nova::NovaConfig::config -> cache_value_type == nova::CacheValueType::MEMTABLEID){
+                for(int i = 0; i < num_try_update_coldkey; i ++){
+                    uint32_t partition_id = rand_r(write_options.rand_seed) % partitioned_active_memtables_.size();
+                    const std::string val(*value);
+                    uint32_t memtable_id = 0;
+                    Status write_status = WriteStaticPartitionNoWriteStall(write_options, key, val, partition_id, (uint64_t)l1seq, nullptr, memtable_id);
+                    if(write_status.ok()){
+                        cache_index_ -> remove(key, options.hash, table_id, false);
+                        cache_index_ -> put(key, options.hash, memtable_id, true);
+                        break;
+                    }else if(write_status.IsSameKey()){
+                        //the other threads probably has already written into memtable
+                        cache_index_ -> put(key, options.hash, memtable_id, true);
+                        break;
+                    }else if(write_status.IsMemtableFullNoInsertion()){
+                        //memtable is full and configuration says that no memtable eviction
+                        break;
+                    }
+                }
+            }else{
+                cache_index_ -> put(key, options.hash, stats.fn, false);
+            }
+        }
+        return s;
+    }
+
     Status
     DBImpl::GetWithRangeIndex(const ReadOptions &options, const Slice &key,
                               std::string *value) {
@@ -2149,7 +2262,6 @@ namespace leveldb {
                 return Status::NotFound("");
             }
         }
-
         Version *current = nullptr;
         uint32_t vid = 0;
         SequenceNumber latest_seq = 0;
@@ -2175,21 +2287,24 @@ namespace leveldb {
             atomic_memtable->mutex_.unlock();
             versions_->versions_[vid]->Unref(dbname_);
         }
-
         if (!l0fns.empty()) {
             s = current->Get(options, l0fns, lkey, &latest_seq, value, &number_of_files_to_search_for_get_);
         }
         NOVA_ASSERT(!s.IsIOError())
             << fmt::format("v:{} status:{} mid:{} version:{}", vid, s.ToString(), memtableid, current->DebugString());
         if (s.IsNotFound()) {
-            // Search L1 files.
+            if(cache_index_ && nova::NovaConfig::config -> enable_cache_index){
+                s = GetWithCacheIndex(options, key, value, current);
+            }else{
+                // Search L1 files.
             Version::GetStats stats = {};
             SequenceNumber l1seq;
             s = current->Get(options, lkey, &l1seq, value, &stats, GetSearchScope::kL1AndAbove,
                              &number_of_files_to_search_for_get_);
-//            if (l1seq > latest_seq) {
-//                value->assign(l1val);
-//            }
+        //    if (l1seq > latest_seq) {
+        //        value->assign(l1val);
+        //    }
+            }
         }
         NOVA_ASSERT(s.ok())
             << fmt::format("key:{} val:{} seq:{} status:{} version:{}",
@@ -2517,6 +2632,183 @@ namespace leveldb {
         return number_of_immutable_memtables_;
     }
 
+    Status DBImpl::WriteStaticPartitionNoWriteStall(const leveldb::WriteOptions &options,
+                                      const leveldb::Slice &key,
+                                      const leveldb::Slice &value,
+                                      uint32_t partition_id,
+                                      uint64_t last_sequence,
+                                      SubRange *subrange,
+                                      uint32_t &cache_memtable_id) {
+        MemTablePartition *partition = partitioned_active_memtables_[partition_id];
+        partition->mutex.Lock();
+        if (subrange != nullptr) {
+            int tinyrange_id;
+            NOVA_ASSERT(BinarySearch(subrange->tiny_ranges, key, &tinyrange_id, user_comparator_))
+                << fmt::format("key:{} range:{}", key.ToString(), subrange->DebugString());
+            subrange->tiny_ranges[tinyrange_id].ninserts++;
+        }
+
+        MemTable *table = nullptr;
+        int imm_slot;
+        uint64_t start_wait = 0;
+        while (true) {
+            table = partition->active_memtable;
+            imm_slot = -1;
+            if (table) {
+                auto atomic_mem = versions_->mid_table_mapping_[table->memtableid()];
+                if (atomic_mem->memtable_size_ <= options_.write_buffer_size) {
+                    break;
+                }
+                if (options_.l0bytes_stop_writes_trigger > 0) {
+                    // Get the current version.
+                    Version *current = nullptr;
+                    while (current == nullptr) {
+                        uint32_t vid = versions_->current_version_id();
+                        NOVA_ASSERT(vid < MAX_LIVE_MEMTABLES) << vid;
+                        current = versions_->versions_[vid]->Ref();
+                    }
+                    if (current->l0_bytes_ >= options_.l0bytes_stop_writes_trigger) {
+                        versions_->versions_[current->version_id_]->Unref(dbname_);
+                        partition->mutex.Unlock();
+                        return Status::IOError("No Write Stall");
+                    }
+                    versions_->versions_[current->version_id_]->Unref(dbname_);
+                }
+                if (atomic_mem->number_of_pending_writes_ > 0) {
+                    partition->mutex.Unlock();
+                    return Status::IOError("No Write Stall");
+                }
+
+                // The table is full.
+                NOVA_ASSERT(!partition->available_slots.empty());
+                // Mark the active memtable as immutable and schedule compaction.
+                imm_slot = partition->available_slots.front();
+                partition->available_slots.pop();
+                NOVA_ASSERT(partitioned_imms_[imm_slot] == 0);
+                partitioned_imms_[imm_slot] = table->memtableid();
+                partition->slot_imm_id[imm_slot] = table->memtableid();
+                partition->immutable_memtable_ids.push_back(table->memtableid());
+                number_of_immutable_memtables_.fetch_add(1);
+                partition->active_memtable = nullptr;
+            }
+            //If memtable only contains cache key value pair just remove it and don't flush
+            if (partition->available_slots.empty() && (nova::NovaConfig::config->memtable_eviction || is_warming_cache_) ) {
+                if (imm_slot != -1) {
+                    uint32_t immid = partitioned_imms_[imm_slot];
+                    NOVA_ASSERT(immid != 0);
+                    auto remove_atomic = versions_->mid_table_mapping_[immid];
+                    if(!remove_atomic -> contains_ktypevalue){
+                        //remove cache entry from memtable
+                        auto *imm = remove_atomic->memtable_;
+                        NOVA_ASSERT(imm);
+                        Iterator *iter = imm->NewIterator(TraceType::IMMUTABLE_MEMTABLE, AccessCaller::kCompaction);
+                        iter->SeekToFirst();
+                        for (; iter->Valid(); iter->Next()) {
+                            Slice key = iter->key();
+                            Slice ukey = ExtractUserKey(key);
+                            ParsedInternalKey ikey;
+                            if(ParseInternalKey(key, &ikey) && ikey.type == ValueType::kTypeCache) {
+                                uint64_t hash = 0;
+                                nova::str_to_int(ikey.user_key.data(), &hash);
+                                cache_index_ -> remove(ikey.user_key.data(), hash, immid, true);
+                            }
+                        }
+                        //remove memtable
+                        partition->RemoveMemTable(remove_atomic->generation_id_.load(), immid);
+                        NOVA_ASSERT(imm_slot < partitioned_imms_.size());
+                        partitioned_imms_[imm_slot] = 0;
+                        partition->slot_imm_id[imm_slot] = 0;
+                        partition->available_slots.push(imm_slot);
+                        NOVA_ASSERT(partition->available_slots.size() <= partition->imm_slots.size());
+                        NOVA_ASSERT(partition->slot_imm_id.erase(imm_slot) == 1)
+                            << fmt::format("{}. {}", imm_slot, partition->DebugString());
+                        partition->immutable_memtable_ids.pop_back();
+                        number_of_immutable_memtables_.fetch_add(-1);
+                        versions_->mid_table_mapping_[immid]->Unref(dbname_);
+                        imm_slot = -1;
+                        if (range_index_manager_) {
+                            RangeIndexVersionEdit edit;
+                            edit.sr = subrange;
+                            std::set<uint32_t> immids;
+                            immids.insert(immid);
+                            edit.removed_memtables = immids;
+                            range_index_manager_->AppendNewVersion(&scan_stats, edit);
+                            range_index_manager_->DeleteObsoleteVersions();
+                        }
+                    }else{
+                        int thread_id = -1;
+                        bool merge_memtables_without_flushing = false;
+                        if (subrange) {
+                            thread_id = subrange->GetCompactionThreadId(
+                                    &EnvBGThread::bg_flush_memtable_thread_id_seq,
+                                    &merge_memtables_without_flushing);
+                        } else {
+                            thread_id =
+                                    EnvBGThread::bg_flush_memtable_thread_id_seq.fetch_add(
+                                            1, std::memory_order_relaxed) %
+                                    bg_flush_memtable_threads_.size();
+                        }
+                        ScheduleFlushMemTableTask(thread_id,
+                                                partitioned_imms_[imm_slot],
+                                                versions_->mid_table_mapping_[partitioned_imms_[imm_slot]]->memtable_,
+                                                partition_id, imm_slot,
+                                                options.rand_seed,
+                                                merge_memtables_without_flushing);
+                        partition->mutex.Unlock();
+                        return Status::IOError("No Write Stall");
+                    }
+                }else{
+                    partition->mutex.Unlock();
+                    return Status::IOError("No Write Stall");
+                }
+                //If nova is running, and no memtable evition, stop inserting key into memtable
+            }else if(partition->available_slots.empty() && !nova::NovaConfig::config->memtable_eviction && !is_warming_cache_){
+                partition->mutex.Unlock();
+                return Status::MemtableFullNoInsertion("Memtables are full, stop cache entry insertion");
+            }
+            if(!partition->available_slots.empty()) {
+                // Create a new table.
+                uint32_t memtable_id = memtable_id_seq_.fetch_add(1);
+                table = new MemTable(internal_comparator_, memtable_id, db_profiler_, true);
+                NOVA_ASSERT(memtable_id < MAX_LIVE_MEMTABLES);
+                uint64_t generation_id = flush_order_->latest_generation_id;
+                versions_->mid_table_mapping_[memtable_id]->SetMemTable(generation_id, table);
+                partition->active_memtable = table;
+                partition->AddMemTable(generation_id, table->memtableid());
+                if (range_index_manager_) {
+                    RangeIndexVersionEdit edit;
+                    edit.sr = subrange;
+                    edit.add_new_memtable = true;
+                    edit.new_memtable_id = memtable_id;
+                    range_index_manager_->AppendNewVersion(&scan_stats, edit);
+                }
+                break;
+            }
+        }
+        uint32_t memtable_id = table->memtableid();
+        auto atomic_mem = versions_->mid_table_mapping_[memtable_id];
+        atomic_mem->number_of_pending_writes_ += 1;
+        if(!table->Add(last_sequence, ValueType::kTypeCache, key, value)){
+            atomic_mem->number_of_pending_writes_ -= 1;
+            partition->mutex.Unlock();
+            return Status::SameKey("Same Key already inserted in memtable");
+        }
+        atomic_mem->memtable_size_ += (key.size() + value.size());
+        cache_memtable_id = memtable_id;
+        atomic_mem->number_of_pending_writes_ -= 1;
+        versions_->mid_table_mapping_[memtable_id]->nentries_ += 1;
+        if (nova::NovaConfig::config->log_record_mode ==
+            nova::NovaLogRecordMode::LOG_RDMA && !options.local_write) {
+            if (atomic_mem->number_of_pending_writes_ == 0 &&
+                atomic_mem->memtable_size_ > options_.write_buffer_size) {
+                // Wake up other threads that are waiting on pending.
+                partition->background_work_finished_signal_.SignalAll();
+            }
+        }
+        partition->mutex.Unlock();
+        return Status::OK();
+    }
+
     bool DBImpl::WriteStaticPartition(const leveldb::WriteOptions &options,
                                       const leveldb::Slice &key,
                                       const leveldb::Slice &value,
@@ -2634,7 +2926,6 @@ namespace leveldb {
                 versions_->mid_table_mapping_[memtable_id]->SetMemTable(generation_id, table);
                 partition->active_memtable = table;
                 partition->AddMemTable(generation_id, table->memtableid());
-
                 if (range_index_manager_) {
                     RangeIndexVersionEdit edit;
                     edit.sr = subrange;
@@ -2663,6 +2954,7 @@ namespace leveldb {
             partition->mutex.Lock();
         }
         table->Add(last_sequence, ValueType::kTypeValue, key, value);
+        atomic_mem -> contains_ktypevalue = true;
         atomic_mem->number_of_pending_writes_ -= 1;
         versions_->mid_table_mapping_[memtable_id]->nentries_ += 1;
         if (lookup_index_) {
@@ -3241,6 +3533,10 @@ namespace leveldb {
         }
         current->QueryStats(db_stats, options_.enable_detailed_stats);
         versions_->versions_[vid]->Unref(dbname_);
+    }
+
+    void DBImpl::QueryCachePartitionStats(int *cache_hits, int *cache_misses, int* sizes, int *cache_evictions){
+        cache_index_ -> cache_stats(cache_hits, cache_misses, sizes, cache_evictions);
     }
 
     bool DBImpl::GetProperty(const Slice &property, std::string *value) {

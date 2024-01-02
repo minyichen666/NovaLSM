@@ -56,7 +56,7 @@ namespace leveldb {
 // DO NOT CHANGE THESE ENUM VALUES: they are embedded in the on-disk
 // data structures.
     enum ValueType {
-        kTypeDeletion = 0x0, kTypeValue = 0x1
+        kTypeDeletion = 0x0, kTypeValue = 0x1,kTypeCache = 0x2
     };
 
     struct ScanStats {
